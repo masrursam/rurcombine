@@ -1,10 +1,10 @@
-const axios = require('axios');
-const FormData = require('form-data');
-const fs = require('fs').promises;
-const readline = require('readline');
-const chalk = require('chalk');
-const { HttpsProxyAgent } = require('https-proxy-agent');
-const { SocksProxyAgent } = require('socks-proxy-agent');
+import { promises as fs } from 'fs';
+import readline from 'readline';
+import chalk from 'chalk';
+import axios from 'axios';
+import FormData from 'form-data';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 
 const rl = readline.createInterface({
     input: process.stdin,
