@@ -5,6 +5,7 @@
 git clone https://github.com/masrursam/rurcombine.git
 cd rurcombine
 npm install axios form-data readline chalk https-proxy-agent socks-proxy-agent ethers@5.7.2 blessed figlet crypto puppeteer
+npm install crypto-js --save
 ```
 
 =======================================
