@@ -103,4 +103,10 @@ TOKEN GPU AUTO REF
 Link : https://token.gpu.net/?ref=UX1ILY
 npm install axios readline https-proxy-agent ethers@5.7.2
 nano code.txt
+
+======================================
+GSOL REFF
+npm install axios tweetnacl base-58 prompt-sync https-proxy-agent http-proxy-agent socks-proxy-agent
+nano proxies.txt <-- Your ref proxy
+nano code.txt <-- Your ref code
 nano proxies.txt
