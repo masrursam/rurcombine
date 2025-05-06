@@ -4,6 +4,8 @@ const { ethers, JsonRpcProvider } = require('ethers');
 const axios = require('axios');
 const moment = require('moment-timezone');
 const readline = require('readline');
+const { DirectSecp256k1HdWallet } = require('@cosmjs/proto-signing');
+require('dotenv').config();
 
 const colors = {
   reset: "\x1b[0m",
@@ -95,13 +97,17 @@ const graphqlEndpoint = 'https://graphql.union.build/v1/graphql';
 const baseExplorerUrl = 'https://sepolia.etherscan.io';
 const unionUrl = 'https://app.union.build/explorer';
 
-const rpcProviders = [new JsonRpcProvider('https://1rpc.io/sepolia')];
+const rpcProviders = [new JsonRpcProvider('https://eth-sepolia.public.blastapi.io')];
 let currentRpcProviderIndex = 0;
 
 function provider() {
   return rpcProviders[currentRpcProviderIndex];
 }
 
+function rotateRpcProvider() {
+  currentRpcProviderIndex = (currentRpcProviderIndex + 1) % rpcProviders.length;
+  return provider();
+}
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -167,6 +173,8 @@ async function pollPacketHash(txHash, retries = 50, intervalMs = 5000) {
     }
     await delay(intervalMs);
   }
+  logger.warn(`No packet hash found after ${retries} retries.`);
+  return null;
 }
 
 async function checkBalanceAndApprove(wallet, usdcAddress, spenderAddress) {
@@ -194,31 +202,49 @@ async function checkBalanceAndApprove(wallet, usdcAddress, spenderAddress) {
   return true;
 }
 
-async function sendFromWallet(walletInfo, maxTransaction) {
+async function sendFromWallet(walletInfo, maxTransaction, destination) {
   const wallet = new ethers.Wallet(walletInfo.privatekey, provider());
-  logger.loading(`Sending from ${wallet.address} (${walletInfo.name || 'Unnamed'})`);
+  let recipientAddress, destinationName, channelId, operand;
+
+  if (destination === 'babylon') {
+    recipientAddress = walletInfo.babylonAddress;
+    destinationName = 'Babylon';
+    channelId = 7;
+    if (!recipientAddress) {
+      logger.warn(`Skipping wallet '${walletInfo.name || 'Unnamed'}': Missing babylonAddress.`);
+      return;
+    }
+  } else if (destination === 'holesky') {
+    recipientAddress = wallet.address;
+    destinationName = 'Holesky';
+    channelId = 8;
+  } else {
+    logger.error(`Invalid destination: ${destination}`);
+    return;
+  }
+
+  logger.loading(`Sending ${maxTransaction} Transaction Sepolia to ${destinationName} from ${wallet.address} (${walletInfo.name || 'Unnamed'})`);
   const shouldProceed = await checkBalanceAndApprove(wallet, USDC_ADDRESS, contractAddress);
   if (!shouldProceed) return;
 
-  const contract = new ethers.Contract(contractAddress, UCS03_ABI, wallet); 
-  const addressHex = wallet.address.slice(2).toLowerCase();
-  const channelId = 8;
+  const contract = new ethers.Contract(contractAddress, UCS03_ABI, wallet);
+  const senderHex = wallet.address.slice(2).toLowerCase();
+  const recipientHex = destination === 'babylon' ? Buffer.from(recipientAddress, "utf8").toString("hex") : senderHex;
   const timeoutHeight = 0;
-  
+
+  if (destination === 'babylon') {
+    operand = `0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000000000000000000000002710000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000002600000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000014${senderHex}000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a${recipientHex}0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e62626e317a7372763233616b6b6778646e77756c3732736674677632786a74356b68736e743377776a687030666668363833687a7035617135613068366e0000`;
+  } else {
+    operand = `0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000014${senderHex}0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014${senderHex}00000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000`;
+  }
+
   for (let i = 1; i <= maxTransaction; i++) {
     logger.step(`${walletInfo.name || 'Unnamed'} | Transaction ${i}/${maxTransaction}`);
-    
     const now = BigInt(Date.now()) * 1_000_000n;
     const oneDayNs = 86_400_000_000_000n;
     const timeoutTimestamp = (now + oneDayNs).toString();
     const timestampNow = Math.floor(Date.now() / 1000);
     const salt = ethers.keccak256(ethers.solidityPacked(['address', 'uint256'], [wallet.address, timestampNow]));
-
-    const operand = '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000014' +
-      addressHex +
-      '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
-      addressHex +
-      '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000';
     const instruction = {
       version: 0,
       opcode: 2,
@@ -249,63 +275,95 @@ async function sendFromWallet(walletInfo, maxTransaction) {
 async function main() {
   header();
 
-  const walletFilePath = path.join(__dirname, 'wallet.json');
-  if (!fs.existsSync(walletFilePath)) {
-    logger.error(`wallet.json not found at ${walletFilePath}. Please create it with your wallet data.`);
+  const wallets = [];
+  let index = 1;
+  while (true) {
+    const privateKey = process.env[`PRIVATE_KEY_${index}`];
+    const babylonAddress = process.env[`BABYLON_ADDRESS_${index}`];
+    if (!privateKey) break; 
+    wallets.push({
+      name: `Wallet${index}`,
+      privatekey: privateKey,
+      babylonAddress: babylonAddress || ''
+    });
+    index++;
+  }
+
+  if (wallets.length === 0) {
+    logger.error(`No wallets found in .env. Please provide at least one PRIVATE_KEY_X.`);
     process.exit(1);
   }
 
-  let walletData;
-  try {
-    walletData = require(walletFilePath);
-  } catch (err) {
-    logger.error(`Error loading wallet.json: ${err.message}`);
-    process.exit(1);
-  }
+  while (true) {
+    console.log(`${colors.cyan}Menu:${colors.reset}`);
+    console.log(`1. Sepolia - Holesky`);
+    console.log(`2. Sepolia - Babylon`);
+    console.log(`3. Random (Holesky and Babylon)`);
+    console.log(`4. Exit`);
+    const menuChoice = await askQuestion(`${colors.cyan}[?] Select menu option (1-4): ${colors.reset}`);
+    const choice = parseInt(menuChoice.trim());
 
-  if (!walletData.wallets || !Array.isArray(walletData.wallets)) {
-    logger.error(`wallet.json does not contain a valid 'wallets' array.`);
-    process.exit(1);
-  }
-
-  const maxTransactionInput = await askQuestion(`${colors.cyan}[?] Enter the number of transactions per wallet: ${colors.reset}`);
-  const maxTransaction = parseInt(maxTransactionInput.trim());
-  
-  if (isNaN(maxTransaction) || maxTransaction <= 0) {
-    logger.error(`Invalid number. Please enter a positive number.`);
-    rl.close();
-    process.exit(1);
-  }
-
-  for (const walletInfo of walletData.wallets) {
-    if (!walletInfo.name) {
-      logger.warn(`Wallet missing 'name' field. Using 'Unnamed' as default.`);
+    if (choice === 4) {
+      logger.info(`Exiting program.`);
+      rl.close();
+      process.exit(0);
     }
-    if (!walletInfo.privatekey) {
-      logger.warn(`Skipping wallet '${walletInfo.name || 'Unnamed'}': Missing privatekey.`);
-      continue;
-    }
-    if (!walletInfo.privatekey.startsWith('0x')) {
-      logger.warn(`Skipping wallet '${walletInfo.name || 'Unnamed'}': Privatekey must start with '0x'.`);
-      continue;
-    }
-    if (!/^(0x)[0-9a-fA-F]{64}$/.test(walletInfo.privatekey)) {
-      logger.warn(`Skipping wallet '${walletInfo.name || 'Unnamed'}': Privatekey is not a valid 64-character hexadecimal string.`);
+
+    if (![1, 2, 3].includes(choice)) {
+      logger.error(`Invalid option. Please select 1, 2, 3, or 4.`);
       continue;
     }
 
-    logger.loading(`Sending ${maxTransaction} Transaction Sepolia to Holesky from ${walletInfo.name || 'Unnamed'}`);
-    await sendFromWallet(walletInfo, maxTransaction);
-  }
+    const maxTransactionInput = await askQuestion(`${colors.cyan}[?] Enter the number of transactions per wallet: ${colors.reset}`);
+    const maxTransaction = parseInt(maxTransactionInput.trim());
 
-  if (walletData.wallets.length === 0) {
-    logger.warn(`No wallets processed. Check wallet.json for valid entries.`);
+    if (isNaN(maxTransaction) || maxTransaction <= 0) {
+      logger.error(`Invalid number. Please enter a positive number.`);
+      continue;
+    }
+
+    for (const walletInfo of wallets) {
+      if (!walletInfo.privatekey) {
+        logger.warn(`Skipping wallet '${walletInfo.name}': Missing privatekey.`);
+        continue;
+      }
+      if (!walletInfo.privatekey.startsWith('0x')) {
+        logger.warn(`Skipping wallet '${walletInfo.name}': Privatekey must start with '0x'.`);
+        continue;
+      }
+      if (!/^(0x)[0-9a-fA-F]{64}$/.test(walletInfo.privatekey)) {
+        logger.warn(`Skipping wallet '${walletInfo.name}': Privatekey is not a valid 64-character hexadecimal string.`);
+        continue;
+      }
+
+      if (choice === 1) {
+        await sendFromWallet(walletInfo, maxTransaction, 'holesky');
+      } else if (choice === 2) {
+        await sendFromWallet(walletInfo, maxTransaction, 'babylon');
+      } else if (choice === 3) {
+        const destinations = ['holesky', 'babylon'].filter(dest => dest !== 'babylon' || walletInfo.babylonAddress);
+        if (destinations.length === 0) {
+          logger.warn(`Skipping wallet '${walletInfo.name}': No valid destinations (missing babylonAddress).`);
+          continue;
+        }
+        for (let i = 0; i < maxTransaction; i++) {
+          const randomDest = destinations[Math.floor(Math.random() * destinations.length)];
+          await sendFromWallet(walletInfo, 1, randomDest);
+          if (i < maxTransaction - 1) {
+            await delay(1000);
+          }
+        }
+      }
+    }
+
+    if (wallets.length === 0) {
+      logger.warn(`No wallets processed. Check .env for valid entries.`);
+    }
   }
-  
-  rl.close();
 }
 
 main().catch((err) => {
   logger.error(`Main error: ${err.message}`);
+  rl.close();
   process.exit(1);
 });
